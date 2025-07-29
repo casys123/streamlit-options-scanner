@@ -1,4 +1,6 @@
+# Rewriting the full Streamlit app with dollar-based minimum premium logic for covered calls
 
+full_app_code_dollar_premium = """
 import streamlit as st
 import pandas as pd
 import yfinance as yf
@@ -48,7 +50,7 @@ def get_rsi(data, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-def scan_stock(ticker, breakout_days, call_dte_limit, call_min_pct, min_pop=0.65):
+def scan_stock(ticker, breakout_days, call_dte_limit, call_min_dollar, min_pop=0.65):
     try:
         stock = yf.Ticker(ticker)
         hist = stock.history(period="60d")
@@ -72,7 +74,7 @@ def scan_stock(ticker, breakout_days, call_dte_limit, call_min_pct, min_pop=0.65
 
                 for call in chain.calls.itertuples():
                     if 3 <= price <= 35 and call.strike > price:
-                        if call.bid >= price * (call_min_pct / 100):
+                        if call.bid >= call_min_dollar:
                             covered_calls.append({
                                 "Ticker": ticker, "Strike": call.strike, "Premium": call.bid,
                                 "Yield %": round((call.bid / price) * 100, 2), "DTE": dte,
@@ -114,7 +116,7 @@ with tab1:
         tickers = load_optionable_tickers()
         rows = []
         for t in tickers:
-            res = scan_stock(t, breakout_days, 14, 1.5)
+            res = scan_stock(t, breakout_days, 14, 25)
             if res and res["Breakout"] and rsi_range[0] <= res["RSI"] <= rsi_range[1] and res["Avg Vol"] >= min_vol:
                 rows.append(res)
         st.dataframe(pd.DataFrame(rows))
@@ -122,13 +124,13 @@ with tab1:
 with tab2:
     st.subheader("📤 Covered Call Finder")
     call_dte = st.slider("Max DTE", 7, 30, 14)
-    call_prem = st.slider("Min Premium (% of stock price)", 0.5, 10.0, 1.5)
+    call_prem_dollar = st.slider("Minimum Covered Call Premium ($)", 25.0, 500.0, 25.0, step=5.0)
     run_calls = st.button("🔍 Scan Covered Calls")
     if run_calls:
         tickers = load_optionable_tickers()
         calls = []
         for t in tickers:
-            r = scan_stock(t, 30, call_dte, call_prem)
+            r = scan_stock(t, 30, call_dte, call_prem_dollar)
             if r and r["Covered Calls"]:
                 calls += r["Covered Calls"]
         df = pd.DataFrame(calls)
@@ -143,7 +145,7 @@ with tab3:
         tickers = load_optionable_tickers()
         spreads = []
         for t in tickers:
-            r = scan_stock(t, 30, 14, 1.5, min_pop / 100)
+            r = scan_stock(t, 30, 14, 25, min_pop / 100)
             if r and r["Put Spreads"]:
                 spreads += r["Put Spreads"]
         df = pd.DataFrame(spreads)
@@ -158,3 +160,8 @@ with tab4:
         st.download_button("Download Calendar", econ.to_csv(index=False), "econ_calendar.csv")
     else:
         st.error("Could not fetch calendar.")
+"""
+
+# Save it to file
+with open("/mnt/data/streamlit_options_app_dollar.py", "w") as f:
+    f.write(full_app_code_dollar_premium)
