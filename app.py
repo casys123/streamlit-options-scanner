@@ -20,6 +20,8 @@ with st.sidebar:
     rsi_min = st.slider("RSI Minimum", 0, 100, 40)
     rsi_max = st.slider("RSI Maximum", 0, 100, 60)
     iv_min = st.slider("Minimum Implied Volatility (%)", 0, 150, 30)
+    vol_min = st.number_input("Minimum Avg Volume (1M)", value=1000000, step=100000)
+    breakout_days = st.select_slider("Breakout Window (days)", options=[30, 60], value=30)
     st.markdown("---")
     run = st.button("🔍 Run Scan")
 
@@ -33,17 +35,23 @@ def fetch_data(ticker):
             return None
 
         close = hist["Close"]
+        avg_volume = hist["Volume"].tail(30).mean()
+        breakout_high = max(close.tail(breakout_days))
+        breakout_status = close.iloc[-1] > breakout_high * 0.98
         rsi = compute_rsi(close)
 
         return {
             "Ticker": ticker,
             "Price": close.iloc[-1],
-            "52W High": max(close[-252:]),
+            "Breakout High": breakout_high,
+            "Breakout": breakout_status,
             "RSI": rsi,
             "IV": info.get("impliedVolatility", None),
             "Sector": info.get("sector", "N/A"),
             "Market Cap": info.get("marketCap", 0),
-            "Dividend Yield": info.get("dividendYield", 0)
+            "Dividend Yield": info.get("dividendYield", 0),
+            "Avg Volume": avg_volume,
+            "Earnings Date": info.get("nextEarningsDate", "N/A")
         }
     except Exception as e:
         return None
@@ -86,10 +94,11 @@ if run:
         df = pd.DataFrame(results)
         df = df[(df["RSI"] >= rsi_min) & (df["RSI"] <= rsi_max)]
         df = df[df["IV"] * 100 >= iv_min]
+        df = df[df["Avg Volume"] >= vol_min]
 
         st.success(f"✅ Found {len(df)} stocks matching your filters.")
 
-        tab1, tab2 = st.tabs(["📈 Covered Calls", "🔐 Put Credit Spreads"])
+        tab1, tab2, tab3 = st.tabs(["📈 Covered Calls", "🔐 Put Credit Spreads", "🚀 Breakout Candidates"])
 
         with tab1:
             df_calls = df[df["Covered Call"] == True].copy()
@@ -110,6 +119,16 @@ if run:
                 st.download_button("📥 Download Put Credit Spreads", csv_spreads, "put_credit_spreads.csv", "text/csv")
             else:
                 st.warning("No suitable Put Credit Spread candidates found.")
+
+        with tab3:
+            df_breakout = df[df["Breakout"] == True].copy()
+            if not df_breakout.empty:
+                st.subheader(f"🚀 Breakout Candidates (past {breakout_days} days)")
+                st.dataframe(df_breakout, use_container_width=True)
+                csv_breakout = df_breakout.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 Download Breakouts", csv_breakout, "breakouts.csv", "text/csv")
+            else:
+                st.warning("No breakout candidates found.")
     else:
         st.warning("❌ No matching stocks found with current settings.")
 
