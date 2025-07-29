@@ -15,7 +15,9 @@ This tool scans **optionable stocks** for:
 - 🔐 **Put Credit Spreads** with ≥65% probability of profit
 """)
 
-FINNHUB_API_KEY = "d24bts1r01qmb591jeo0d24bts1r01qmb591jeog"
+FINNHUB_API_KEY = "YOUR_API_KEY_HERE"
+if FINNHUB_API_KEY == "YOUR_API_KEY_HERE":
+    st.warning("⚠️ Please update your Finnhub API key to fetch live market data.")
 
 # Load default stock list from file or fallback
 @st.cache_data
@@ -51,7 +53,11 @@ def fetch_finnhub_data(ticker):
         quote = requests.get(quote_url).json()
         metrics = requests.get(metrics_url).json()
 
-        if not quote or not metrics:
+        if not quote.get("c"):
+            st.warning(f"⚠️ No quote data found for {ticker}.")
+            return None
+        if not metrics.get("metric"):
+            st.warning(f"⚠️ No metrics found for {ticker}.")
             return None
 
         price = quote.get("c")
@@ -75,7 +81,8 @@ def fetch_finnhub_data(ticker):
             "Avg Volume": vol,
             "Earnings Date": profile.get("earningsDate", "N/A")
         }
-    except Exception:
+    except Exception as e:
+        st.error(f"❌ Error fetching data for {ticker}: {e}")
         return None
 
 
