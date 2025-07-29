@@ -19,7 +19,7 @@ def load_default_tickers():
 def fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct):
     try:
         stock = yf.Ticker(ticker)
-        hist = stock.history(period="90d")
+        hist = stock.history(period="30d")
         info = stock.info if stock.info else {}
 
         if hist.empty:
@@ -39,9 +39,7 @@ def fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct):
         breakout_high = max(close.tail(breakout_days))
         breakout = price >= breakout_high * 0.98
 
-        best_premium = 0
-        best_strike = None
-        best_dte = None
+        covered_calls = []
         put_spreads = []
 
         if stock.options:
@@ -53,15 +51,19 @@ def fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct):
                     opt_chain = stock.option_chain(exp)
 
                     if opt_chain.calls.empty or opt_chain.puts.empty:
-                        st.info(f"No options data for {ticker} exp {exp}")
                         continue
 
                     for call in opt_chain.calls.itertuples():
                         if call.strike > price and call.bid >= price * (min_premium_pct / 100):
-                            best_premium = call.bid
-                            best_strike = call.strike
-                            best_dte = dte
-                            break
+                            covered_calls.append({
+                                "Ticker": ticker,
+                                "Expiration": exp,
+                                "Strike": call.strike,
+                                "Premium": call.bid,
+                                "DTE": dte,
+                                "Entry Date": datetime.today().date(),
+                                "Exit Date": datetime.today().date() + timedelta(days=dte)
+                            })
 
                     puts = opt_chain.puts.sort_values("strike")
                     for i in range(len(puts) - 1):
@@ -80,13 +82,15 @@ def fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct):
                                     "Width": width,
                                     "DTE": dte,
                                     "POP": pop,
-                                    "Expiration": exp
+                                    "Expiration": exp,
+                                    "Entry Date": datetime.today().date(),
+                                    "Exit Date": datetime.today().date() + timedelta(days=dte)
                                 })
                                 break
-                except Exception as inner_e:
-                    st.warning(f"Option chain error for {ticker}: {inner_e}")
-                    st.text(traceback.format_exc())
+                except:
                     continue
+
+        iv = round(info.get("impliedVolatility", 0) * 100, 2)
 
         return {
             "Ticker": ticker,
@@ -94,20 +98,16 @@ def fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct):
             "Breakout High": breakout_high,
             "Breakout": breakout,
             "RSI": round(rsi, 2),
-            "IV": round(info.get("impliedVolatility", 0) * 100, 2),
-            "Option DTE": best_dte,
-            "Strike": best_strike,
-            "Covered Call Premium": best_premium,
+            "IV": iv,
+            "Covered Calls": covered_calls,
+            "Put Spreads": put_spreads,
             "Sector": info.get("sector", "N/A"),
             "Market Cap": info.get("marketCap", 0),
             "Dividend Yield": round(info.get("dividendYield", 0) * 100, 2),
             "Avg Volume": info.get("averageVolume", 0),
-            "Earnings Date": info.get("earningsDate", "N/A"),
-            "Put Spreads": put_spreads
+            "Earnings Date": info.get("earningsDate", "N/A")
         }
-    except Exception as e:
-        st.error(f"Failed to retrieve data for {ticker}: {e}")
-        st.text(traceback.format_exc())
+    except:
         return None
 
 def fetch_economic_calendar():
@@ -123,24 +123,14 @@ def fetch_economic_calendar():
             event = item.find("title").text
             impact = item.find("impact").text
             color = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}.get(impact, "⚪")
-            events.append({"date": date, "time": time, "country": country, "event": event, "impact": impact, "color": color})
+            events.append({"Date": date, "Time": time, "Country": country, "Event": event, "Impact": impact, "Color": color})
         return pd.DataFrame(events)
-    except Exception as e:
-        st.error(f"Could not load calendar: {e}")
-        st.text(traceback.format_exc())
+    except:
         return pd.DataFrame()
 
-# Internet access test
-try:
-    requests.get("https://www.google.com")
-    st.success("✅ Internet access is working!")
-except Exception as e:
-    st.error(f"❌ No internet access: {e}")
-
-# Basic user controls for scanning
 with st.sidebar:
     st.header("Scan Settings")
-    watchlist = st.text_area("Enter stock tickers (comma separated):", "AAPL,MSFT,TSLA", key="watchlist")
+    watchlist = st.text_area("Enter stock tickers (comma separated):", "AAPL,MSFT,TSLA")
     rsi_min = st.slider("RSI Minimum", 0, 100, 0)
     rsi_max = st.slider("RSI Maximum", 0, 100, 100)
     iv_min = st.slider("Minimum Implied Volatility (%)", 0, 150, 0)
@@ -152,16 +142,50 @@ with st.sidebar:
 
 if run:
     tickers = [x.strip().upper() for x in watchlist.split(",") if x.strip()]
-    st.write("Scanning tickers:", tickers)
     results = []
-    put_spread_rows = []
+    breakouts, calls, spreads = [], [], []
 
     for ticker in tickers:
-        st.write(f"Scanning {ticker}...")
         result = fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct)
         if result and result["RSI"] >= rsi_min and result["RSI"] <= rsi_max and result["IV"] >= iv_min and result["Avg Volume"] >= vol_min:
             results.append(result)
-            put_spread_rows.extend(result.get("Put Spreads", []))
+            if result["Breakout"]:
+                breakouts.append(result)
+            calls.extend(result["Covered Calls"])
+            spreads.extend(result["Put Spreads"])
 
-    st.success(f"Scan complete. Found {len(results)} valid stocks.")
-    st.write(results)
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Breakout Stocks", "📤 Covered Calls", "📥 Put Credit Spreads", "📅 Econ Calendar"])
+
+    with tab1:
+        st.subheader("📊 Breakout Stocks")
+        if breakouts:
+            st.dataframe(pd.DataFrame(breakouts))
+            st.download_button("Download Breakouts", pd.DataFrame(breakouts).to_csv(index=False), "breakouts.csv")
+        else:
+            st.info("No breakout candidates found.")
+
+    with tab2:
+        st.subheader("📤 Covered Call Opportunities")
+        if calls:
+            st.dataframe(pd.DataFrame(calls))
+            st.download_button("Download Covered Calls", pd.DataFrame(calls).to_csv(index=False), "covered_calls.csv")
+        else:
+            st.info("No covered calls found with current filters.")
+
+    with tab3:
+        st.subheader("📥 Put Credit Spreads")
+        if spreads:
+            st.dataframe(pd.DataFrame(spreads))
+            st.download_button("Download Put Spreads", pd.DataFrame(spreads).to_csv(index=False), "put_spreads.csv")
+        else:
+            st.info("No put credit spreads found with current filters.")
+
+    with tab4:
+        st.subheader("📅 Weekly Economic Calendar")
+        econ = fetch_economic_calendar()
+        if not econ.empty:
+            econ["Display"] = econ["Color"] + " " + econ["Event"] + " (" + econ["Impact"] + ")"
+            st.dataframe(econ[["Date", "Time", "Country", "Display"]])
+            st.download_button("Download Calendar", econ.to_csv(index=False), "calendar.csv")
+        else:
+            st.error("Could not load economic calendar.")
