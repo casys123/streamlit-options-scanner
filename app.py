@@ -15,8 +15,8 @@ This tool scans **optionable stocks** for:
 - 🔐 **Put Credit Spreads** with ≥65% probability of profit
 """)
 
-POLYGON_API_KEY = "e5COL1pWApoPn8cI7Uq82Ggiipqax2hc"
-if POLYGON_API_KEY == "e5COL1pWApoPn8cI7Uq82Ggiipqax2hc":
+POLYGON_API_KEY = "ej1WiumfIa3HsbU8HxlqQRTxAbzj9Jnz"
+if POLYGON_API_KEY == "ej1WiumfIa3HsbU8HxlqQRTxAbzj9Jnz":
     st.warning("⚠️ Please update your Polygon.io API key to fetch live market data.")
 
 @st.cache_data
