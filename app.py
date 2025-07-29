@@ -1,6 +1,4 @@
-# Rewriting the entire corrected Streamlit app with all requested features and the fixed economic calendar function
 
-full_app_code = """
 import streamlit as st
 import pandas as pd
 import yfinance as yf
@@ -160,8 +158,3 @@ with tab4:
         st.download_button("Download Calendar", econ.to_csv(index=False), "econ_calendar.csv")
     else:
         st.error("Could not fetch calendar.")
-"""
-
-# Save the full working app as app.py
-with open("/mnt/data/streamlit_options_app.py", "w") as f:
-    f.write(full_app_code)
