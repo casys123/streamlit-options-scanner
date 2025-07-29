@@ -163,5 +163,4 @@ with tab4:
 """
 
 # Save it to file
-with open("/mnt/data/streamlit_options_app_dollar.py", "w") as f:
-    f.write(full_app_code_dollar_premium)
+
