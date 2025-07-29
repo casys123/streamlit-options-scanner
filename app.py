@@ -61,24 +61,26 @@ def fetch_yfinance_data(ticker, dte_days, min_premium_pct):
         breakout_high = max(close.tail(breakout_days))
         breakout = price >= breakout_high * 0.98
 
-        # Find best covered call
         best_premium = 0
         best_strike = None
         best_dte = None
         if stock.options:
             for exp in stock.options:
-                dte = (datetime.strptime(exp, "%Y-%m-%d") - datetime.today()).days
-                if dte > dte_days:
-                    continue
-                opt_chain = stock.option_chain(exp)
-                for call in opt_chain.calls.itertuples():
-                    if call.strike > price and call.bid >= price * (min_premium_pct / 100):
-                        best_premium = call.bid
-                        best_strike = call.strike
-                        best_dte = dte
+                try:
+                    dte = (datetime.strptime(exp, "%Y-%m-%d") - datetime.today()).days
+                    if dte > dte_days:
+                        continue
+                    opt_chain = stock.option_chain(exp)
+                    for call in opt_chain.calls.itertuples():
+                        if call.strike > price and call.bid >= price * (min_premium_pct / 100):
+                            best_premium = call.bid
+                            best_strike = call.strike
+                            best_dte = dte
+                            break
+                    if best_premium:
                         break
-                if best_premium:
-                    break
+                except:
+                    continue
 
         return {
             "Ticker": ticker,
@@ -99,3 +101,24 @@ def fetch_yfinance_data(ticker, dte_days, min_premium_pct):
     except Exception as e:
         st.error(f"❌ Error fetching data for {ticker}: {e}")
         return None
+
+if run:
+    tickers = [x.strip().upper() for x in watchlist.split(",") if x.strip()][:300]
+    results = []
+    entry_date = datetime.today().date()
+    exit_date = entry_date + timedelta(days=7)
+
+    with st.spinner("🔍 Scanning stocks, please wait..."):
+        for ticker in tickers:
+            result = fetch_yfinance_data(ticker, dte_days, min_premium_pct)
+            if result and result["RSI"] >= rsi_min and result["RSI"] <= rsi_max and result["IV"] >= iv_min and result["Avg Volume"] >= vol_min:
+                results.append(result)
+
+    if results:
+        df = pd.DataFrame(results)
+        st.success(f"✅ Scan complete. {len(df)} stocks matched your filters.")
+        st.dataframe(df, use_container_width=True)
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Download Results", csv, "options_scan.csv", "text/csv")
+    else:
+        st.warning("❌ No matching stocks found.")
