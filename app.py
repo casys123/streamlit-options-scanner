@@ -4,6 +4,7 @@ import yfinance as yf
 import requests
 from datetime import datetime, timedelta
 from xml.etree import ElementTree
+import traceback
 
 st.set_page_config(page_title="Stock Options Strategy Scanner", layout="wide")
 st.title("📈 Stock Options Breakout, Covered Calls & Put Credit Spreads")
@@ -19,9 +20,10 @@ def fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct):
     try:
         stock = yf.Ticker(ticker)
         hist = stock.history(period="90d")
-        info = stock.info
+        info = stock.info if stock.info else {}
 
         if hist.empty:
+            st.warning(f"No historical data for {ticker}")
             return None
 
         close = hist["Close"]
@@ -50,7 +52,10 @@ def fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct):
                         continue
                     opt_chain = stock.option_chain(exp)
 
-                    # Covered Call Scan
+                    if opt_chain.calls.empty or opt_chain.puts.empty:
+                        st.info(f"No options data for {ticker} exp {exp}")
+                        continue
+
                     for call in opt_chain.calls.itertuples():
                         if call.strike > price and call.bid >= price * (min_premium_pct / 100):
                             best_premium = call.bid
@@ -58,7 +63,6 @@ def fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct):
                             best_dte = dte
                             break
 
-                    # Put Credit Spread Scan
                     puts = opt_chain.puts.sort_values("strike")
                     for i in range(len(puts) - 1):
                         short = puts.iloc[i]
@@ -79,7 +83,9 @@ def fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct):
                                     "Expiration": exp
                                 })
                                 break
-                except:
+                except Exception as inner_e:
+                    st.warning(f"Option chain error for {ticker}: {inner_e}")
+                    st.text(traceback.format_exc())
                     continue
 
         return {
@@ -99,7 +105,9 @@ def fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct):
             "Earnings Date": info.get("earningsDate", "N/A"),
             "Put Spreads": put_spreads
         }
-    except:
+    except Exception as e:
+        st.error(f"Failed to retrieve data for {ticker}: {e}")
+        st.text(traceback.format_exc())
         return None
 
 def fetch_economic_calendar():
@@ -117,68 +125,14 @@ def fetch_economic_calendar():
             color = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}.get(impact, "⚪")
             events.append({"date": date, "time": time, "country": country, "event": event, "impact": impact, "color": color})
         return pd.DataFrame(events)
-    except:
+    except Exception as e:
+        st.error(f"Could not load calendar: {e}")
+        st.text(traceback.format_exc())
         return pd.DataFrame()
 
-# UI and scan logic
-with st.sidebar:
-    st.header("Scan Settings")
-    watchlist = st.text_area("Enter stock tickers (comma separated):", ",".join(load_default_tickers()), key="watchlist")
-    rsi_min = st.slider("RSI Minimum", 0, 100, 40)
-    rsi_max = st.slider("RSI Maximum", 0, 100, 60)
-    iv_min = st.slider("Minimum Implied Volatility (%)", 0, 150, 30)
-    vol_min = st.number_input("Minimum Avg Volume (1M)", value=1000000, step=100000)
-    breakout_days = st.select_slider("Breakout Window (days)", options=[30, 60], value=30)
-    dte_days = st.slider("Max DTE for Covered Calls", 7, 60, 30)
-    min_premium_pct = st.slider("Min Covered Call Premium (% of stock price)", 0.5, 10.0, 1.5)
-    run = st.button("🔍 Run Scan")
-
-entry_date = datetime.today().date()
-exit_date = entry_date + timedelta(days=7)
-
-tabs = st.tabs(["📊 Breakout Scanner", "💰 Covered Calls", "🔐 Put Credit Spreads", "📅 Economic Calendar"])
-
-if run:
-    with st.spinner("🔄 Scanning stocks... This may take a minute..."):
-        tickers = [x.strip().upper() for x in watchlist.split(",") if x.strip()][:300]
-        results = []
-        put_spread_rows = []
-
-        for ticker in tickers:
-            result = fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct)
-            if result and result["RSI"] >= rsi_min and result["RSI"] <= rsi_max and result["IV"] >= iv_min and result["Avg Volume"] >= vol_min:
-                results.append(result)
-                put_spread_rows.extend(result.get("Put Spreads", []))
-
-        if results:
-            df = pd.DataFrame(results)
-            with tabs[0]:
-                st.subheader("📊 Breakout Candidates")
-                breakout_df = df[df["Breakout"] == True]
-                st.dataframe(breakout_df)
-                st.download_button("📥 Download Breakouts", breakout_df.to_csv(index=False), "breakouts.csv")
-
-            with tabs[1]:
-                st.subheader("💰 Covered Call Opportunities")
-                cc_df = df[df["Covered Call Premium"] > 0]
-                cc_df["Entry Date"] = entry_date
-                cc_df["Exit Date"] = exit_date
-                st.dataframe(cc_df)
-                st.download_button("📥 Download Covered Calls", cc_df.to_csv(index=False), "covered_calls.csv")
-
-            with tabs[2]:
-                st.subheader("🔐 Put Credit Spreads")
-                ps_df = pd.DataFrame(put_spread_rows)
-                ps_df["Entry Date"] = entry_date
-                ps_df["Exit Date"] = exit_date
-                st.dataframe(ps_df)
-                st.download_button("📥 Download Put Spreads", ps_df.to_csv(index=False), "put_spreads.csv")
-
-else:
-    with tabs[3]:
-        cal = fetch_economic_calendar()
-        if not cal.empty:
-            cal["event_display"] = cal["color"] + " " + cal["event"]
-            st.dataframe(cal[["date", "time", "country", "event_display", "impact"]], use_container_width=True)
-        else:
-            st.warning("Could not load calendar data.")
+# Internet access test
+try:
+    requests.get("https://www.google.com")
+    st.success("✅ Internet access is working!")
+except Exception as e:
+    st.error(f"❌ No internet access: {e}")
