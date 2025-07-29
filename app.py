@@ -61,14 +61,14 @@ def compute_rsi(series, period=14):
 
 def evaluate_covered_call_potential(data):
     if data["IV"] and data["IV"] > 0.4 and data["Dividend Yield"] == 0:
-        return "✅"
-    return ""
+        return True
+    return False
 
 
 def evaluate_put_credit_spread_risk(data):
     if data["IV"] and data["IV"] > 0.3 and rsi_min <= data["RSI"] <= rsi_max:
-        return "✅"
-    return ""
+        return True
+    return False
 
 # ----------- MAIN SCAN ----------- #
 if run:
@@ -86,11 +86,30 @@ if run:
         df = pd.DataFrame(results)
         df = df[(df["RSI"] >= rsi_min) & (df["RSI"] <= rsi_max)]
         df = df[df["IV"] * 100 >= iv_min]
-        st.success(f"✅ Found {len(df)} stocks matching your filters.")
-        st.dataframe(df, use_container_width=True)
 
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download Results", csv, "options_strategy_scan.csv", "text/csv")
+        st.success(f"✅ Found {len(df)} stocks matching your filters.")
+
+        tab1, tab2 = st.tabs(["📈 Covered Calls", "🔐 Put Credit Spreads"])
+
+        with tab1:
+            df_calls = df[df["Covered Call"] == True].copy()
+            if not df_calls.empty:
+                st.subheader("📈 Best Premium Stocks for Covered Calls")
+                st.dataframe(df_calls, use_container_width=True)
+                csv_calls = df_calls.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 Download Covered Calls", csv_calls, "covered_calls.csv", "text/csv")
+            else:
+                st.warning("No suitable Covered Call candidates found.")
+
+        with tab2:
+            df_spreads = df[df["Put Credit Spread"] == True].copy()
+            if not df_spreads.empty:
+                st.subheader("🔐 Put Credit Spreads with ≥65% POP")
+                st.dataframe(df_spreads, use_container_width=True)
+                csv_spreads = df_spreads.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 Download Put Credit Spreads", csv_spreads, "put_credit_spreads.csv", "text/csv")
+            else:
+                st.warning("No suitable Put Credit Spread candidates found.")
     else:
         st.warning("❌ No matching stocks found with current settings.")
 
