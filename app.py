@@ -39,7 +39,13 @@ def load_optionable_tickers():
     try:
         return pd.read_csv("default_stock_list.csv")["Ticker"].tolist()
     except:
-        return ["AAPL", "MSFT", "TSLA", "SPY", "QQQ", "IWM", "DIA", "AMD", "NVDA", "GOOGL", "META", "NFLX"]
+        return ["AAPL", "MSFT", "TSLA", "NVDA", "AMD", "GOOGL", "META", "AMZN", "NFLX", "INTC",
+    "SPY", "QQQ", "IWM", "DIA", "XLF", "XLK", "XLE", "XLY", "XLV", "ARKK",
+    "BA", "GE", "NKE", "WMT", "TGT", "CVX", "XOM", "COP", "SLB", "PSX",
+    "JPM", "BAC", "GS", "MS", "C", "SCHW", "WFC", "SOFI", "PYPL", "SQ",
+    "ROKU", "UBER", "LYFT", "CRM", "PLTR", "BABA", "TSM", "SHOP", "ADBE", "AVGO",
+    "CSCO", "ORCL", "IBM", "MRNA", "PFE", "JNJ", "UNH", "LLY", "ABBV", "AZN"
+]]
 
 # -------- RSI CALC --------
 def get_rsi(data, window=14):
