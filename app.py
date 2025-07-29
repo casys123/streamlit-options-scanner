@@ -16,6 +16,25 @@ def load_default_tickers():
     except:
         return ["AAPL", "MSFT", "TSLA", "AMZN", "NVDA", "AMD", "GOOGL", "META", "NFLX", "INTC"]
 
+@st.cache_data(ttl=86400)  # Cache economic calendar for 24 hours (1 day)
+def fetch_economic_calendar():
+    url = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
+    try:
+        response = requests.get(url)
+        tree = ElementTree.fromstring(response.content)
+        events = []
+        for item in tree.findall("event"):
+            date = item.find("date").text
+            time = item.find("time").text
+            country = item.find("country").text
+            event = item.find("title").text
+            impact = item.find("impact").text
+            color = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}.get(impact, "⚪")
+            events.append({"Date": date, "Time": time, "Country": country, "Event": event, "Impact": impact, "Color": color})
+        return pd.DataFrame(events)
+    except:
+        return pd.DataFrame()
+
 def fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct):
     try:
         stock = yf.Ticker(ticker)
@@ -23,7 +42,6 @@ def fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct):
         info = stock.info if stock.info else {}
 
         if hist.empty:
-            st.warning(f"No historical data for {ticker}")
             return None
 
         close = hist["Close"]
@@ -49,10 +67,8 @@ def fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct):
                     if dte > dte_days:
                         continue
                     opt_chain = stock.option_chain(exp)
-
                     if opt_chain.calls.empty or opt_chain.puts.empty:
                         continue
-
                     for call in opt_chain.calls.itertuples():
                         if call.strike > price and call.bid >= price * (min_premium_pct / 100):
                             covered_calls.append({
@@ -64,7 +80,6 @@ def fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct):
                                 "Entry Date": datetime.today().date(),
                                 "Exit Date": datetime.today().date() + timedelta(days=dte)
                             })
-
                     puts = opt_chain.puts.sort_values("strike")
                     for i in range(len(puts) - 1):
                         short = puts.iloc[i]
@@ -109,24 +124,6 @@ def fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct):
         }
     except:
         return None
-
-def fetch_economic_calendar():
-    url = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
-    try:
-        response = requests.get(url)
-        tree = ElementTree.fromstring(response.content)
-        events = []
-        for item in tree.findall("event"):
-            date = item.find("date").text
-            time = item.find("time").text
-            country = item.find("country").text
-            event = item.find("title").text
-            impact = item.find("impact").text
-            color = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}.get(impact, "⚪")
-            events.append({"Date": date, "Time": time, "Country": country, "Event": event, "Impact": impact, "Color": color})
-        return pd.DataFrame(events)
-    except:
-        return pd.DataFrame()
 
 with st.sidebar:
     st.header("Scan Settings")
