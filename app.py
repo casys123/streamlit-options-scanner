@@ -130,7 +130,6 @@ def fetch_economic_calendar():
 
 with st.sidebar:
     st.header("Scan Settings")
-    watchlist = st.text_area("Enter stock tickers (comma separated):", "AAPL,MSFT,TSLA")
     price_range = st.selectbox("Select stock price range:", ["All", "< $10", "$10 - $50", "$50 - $150", "$150+"], index=0)
     rsi_min = st.slider("RSI Minimum", 0, 100, 0)
     rsi_max = st.slider("RSI Maximum", 0, 100, 100)
@@ -142,11 +141,11 @@ with st.sidebar:
     run = st.button("🔍 Run Scan")
 
 if run:
-    tickers = [x.strip().upper() for x in watchlist.split(",") if x.strip()]
+    all_tickers = load_default_tickers()
     results = []
     breakouts, calls, spreads = [], [], []
 
-    for ticker in tickers:
+    for ticker in all_tickers:
         result = fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct)
         if result and result["RSI"] >= rsi_min and result["RSI"] <= rsi_max and result["IV"] >= iv_min and result["Avg Volume"] >= vol_min:
             price = result["Price"]
