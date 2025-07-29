@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import yfinance as yf
+import requests
 from datetime import datetime, timedelta
 import smtplib
 import ssl
@@ -14,6 +14,8 @@ This tool scans **optionable stocks** for:
 - 💰 **Weekly Covered Call** opportunities with high premiums
 - 🔐 **Put Credit Spreads** with ≥65% probability of profit
 """)
+
+FINNHUB_API_KEY = "d20b0u1r01qmbi8rv080d20b0u1r01qmbi8rv08g"
 
 # Load default stock list from file or fallback
 @st.cache_data
@@ -39,54 +41,49 @@ with st.sidebar:
     run = st.button("🔍 Run Scan")
 
 # ----------- FUNCTIONS ----------- #
-def fetch_data(ticker):
+def fetch_finnhub_data(ticker):
     try:
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period="90d")
-        info = stock.info
-        if hist.empty:
+        profile_url = f"https://finnhub.io/api/v1/stock/profile2?symbol={ticker}&token={FINNHUB_API_KEY}"
+        quote_url = f"https://finnhub.io/api/v1/quote?symbol={ticker}&token={FINNHUB_API_KEY}"
+        metrics_url = f"https://finnhub.io/api/v1/stock/metric?symbol={ticker}&metric=all&token={FINNHUB_API_KEY}"
+
+        profile = requests.get(profile_url).json()
+        quote = requests.get(quote_url).json()
+        metrics = requests.get(metrics_url).json()
+
+        if not quote or not metrics:
             return None
 
-        close = hist["Close"]
-        avg_volume = hist["Volume"].tail(30).mean()
-        breakout_high = max(close.tail(breakout_days))
-        breakout_status = close.iloc[-1] > breakout_high * 0.98
-        rsi = compute_rsi(close)
+        price = quote.get("c")
+        high = quote.get("h")
+        low = quote.get("l")
+        vol = quote.get("v")
+        iv = metrics.get("metric", {}).get("impliedVolatility", None)
+        dividend_yield = metrics.get("metric", {}).get("dividendYieldIndicatedAnnual", 0)
+        rsi = metrics.get("metric", {}).get("rsi", 50)
 
         return {
             "Ticker": ticker,
-            "Price": close.iloc[-1],
-            "Breakout High": breakout_high,
-            "Breakout": breakout_status,
+            "Price": price,
+            "Breakout High": high,
+            "Breakout": price > high * 0.98 if high else False,
             "RSI": rsi,
-            "IV": info.get("impliedVolatility", None),
-            "Sector": info.get("sector", "N/A"),
-            "Market Cap": info.get("marketCap", 0),
-            "Dividend Yield": info.get("dividendYield", 0),
-            "Avg Volume": avg_volume,
-            "Earnings Date": info.get("nextEarningsDate", "N/A")
+            "IV": iv,
+            "Sector": profile.get("finnhubIndustry", "N/A"),
+            "Market Cap": profile.get("marketCapitalization", 0),
+            "Dividend Yield": dividend_yield,
+            "Avg Volume": vol,
+            "Earnings Date": profile.get("earningsDate", "N/A")
         }
     except Exception:
         return None
 
 
-def compute_rsi(series, period=14):
-    delta = series.diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
-    rs = avg_gain / avg_loss
-    return round(100 - (100 / (1 + rs.iloc[-1])), 2)
-
-
 def evaluate_covered_call_potential(data):
     return bool(data["IV"] and data["IV"] > 0.4 and data["Dividend Yield"] == 0)
 
-
 def evaluate_put_credit_spread_risk(data):
     return bool(data["IV"] and data["IV"] > 0.3 and rsi_min <= data["RSI"] <= rsi_max)
-
 
 def send_email_report(content, to_email):
     try:
@@ -111,9 +108,9 @@ if run:
     entry_date = datetime.today().date()
     exit_date = entry_date + timedelta(days=7)
 
-    with st.spinner("Fetching and analyzing data..."):
+    with st.spinner("Fetching and analyzing data from Finnhub..."):
         for tkr in tickers:
-            data = fetch_data(tkr)
+            data = fetch_finnhub_data(tkr)
             if data:
                 data["Covered Call"] = evaluate_covered_call_potential(data)
                 data["Put Credit Spread"] = evaluate_put_credit_spread_risk(data)
@@ -168,5 +165,4 @@ if run:
         st.warning("❌ No matching stocks found with current settings.")
 
 st.markdown("---")
-st.caption("Built with ❤️ using yFinance and Streamlit")
-
+st.caption("Built with ❤️ using Finnhub and Streamlit")
