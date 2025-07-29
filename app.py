@@ -15,7 +15,7 @@ This tool scans **optionable stocks** for:
 - 🔐 **Put Credit Spreads** with ≥65% probability of profit
 """)
 
-FINNHUB_API_KEY = "YOUR_API_KEY_HERE"
+FINNHUB_API_KEY = "d24bts1r01qmb591jeo0d24bts1r01qmb591jeog"
 if FINNHUB_API_KEY == "YOUR_API_KEY_HERE":
     st.warning("⚠️ Please update your Finnhub API key to fetch live market data.")
 
