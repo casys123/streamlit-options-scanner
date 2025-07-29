@@ -3,6 +3,7 @@ import pandas as pd
 import yfinance as yf
 import requests
 from datetime import datetime, timedelta
+from xml.etree import ElementTree
 
 st.set_page_config(page_title="Stock Options Strategy Scanner", layout="wide")
 st.title("📈 Stock Options Breakout, Covered Calls & Put Credit Spreads")
@@ -104,12 +105,22 @@ def fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct):
 def fetch_economic_calendar():
     url = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
     try:
-        df = pd.read_xml(url)
-        df['color'] = df['impact'].map({"High": "🔴", "Medium": "🟡", "Low": "🟢"})
-        return df[["date", "time", "country", "event", "impact", "color"]]
+        response = requests.get(url)
+        tree = ElementTree.fromstring(response.content)
+        events = []
+        for item in tree.findall("event"):
+            date = item.find("date").text
+            time = item.find("time").text
+            country = item.find("country").text
+            event = item.find("title").text
+            impact = item.find("impact").text
+            color = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}.get(impact, "⚪")
+            events.append({"date": date, "time": time, "country": country, "event": event, "impact": impact, "color": color})
+        return pd.DataFrame(events)
     except:
         return pd.DataFrame()
 
+# UI and scan logic
 with st.sidebar:
     st.header("Scan Settings")
     watchlist = st.text_area("Enter stock tickers (comma separated):", ",".join(load_default_tickers()), key="watchlist")
@@ -128,39 +139,40 @@ exit_date = entry_date + timedelta(days=7)
 tabs = st.tabs(["📊 Breakout Scanner", "💰 Covered Calls", "🔐 Put Credit Spreads", "📅 Economic Calendar"])
 
 if run:
-    tickers = [x.strip().upper() for x in watchlist.split(",") if x.strip()][:300]
-    results = []
-    put_spread_rows = []
+    with st.spinner("🔄 Scanning stocks... This may take a minute..."):
+        tickers = [x.strip().upper() for x in watchlist.split(",") if x.strip()][:300]
+        results = []
+        put_spread_rows = []
 
-    for ticker in tickers:
-        result = fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct)
-        if result and result["RSI"] >= rsi_min and result["RSI"] <= rsi_max and result["IV"] >= iv_min and result["Avg Volume"] >= vol_min:
-            results.append(result)
-            put_spread_rows.extend(result.get("Put Spreads", []))
+        for ticker in tickers:
+            result = fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct)
+            if result and result["RSI"] >= rsi_min and result["RSI"] <= rsi_max and result["IV"] >= iv_min and result["Avg Volume"] >= vol_min:
+                results.append(result)
+                put_spread_rows.extend(result.get("Put Spreads", []))
 
-    if results:
-        df = pd.DataFrame(results)
-        with tabs[0]:
-            st.subheader("📊 Breakout Candidates")
-            breakout_df = df[df["Breakout"] == True]
-            st.dataframe(breakout_df)
-            st.download_button("📥 Download Breakouts", breakout_df.to_csv(index=False), "breakouts.csv")
+        if results:
+            df = pd.DataFrame(results)
+            with tabs[0]:
+                st.subheader("📊 Breakout Candidates")
+                breakout_df = df[df["Breakout"] == True]
+                st.dataframe(breakout_df)
+                st.download_button("📥 Download Breakouts", breakout_df.to_csv(index=False), "breakouts.csv")
 
-        with tabs[1]:
-            st.subheader("💰 Covered Call Opportunities")
-            cc_df = df[df["Covered Call Premium"] > 0]
-            cc_df["Entry Date"] = entry_date
-            cc_df["Exit Date"] = exit_date
-            st.dataframe(cc_df)
-            st.download_button("📥 Download Covered Calls", cc_df.to_csv(index=False), "covered_calls.csv")
+            with tabs[1]:
+                st.subheader("💰 Covered Call Opportunities")
+                cc_df = df[df["Covered Call Premium"] > 0]
+                cc_df["Entry Date"] = entry_date
+                cc_df["Exit Date"] = exit_date
+                st.dataframe(cc_df)
+                st.download_button("📥 Download Covered Calls", cc_df.to_csv(index=False), "covered_calls.csv")
 
-        with tabs[2]:
-            st.subheader("🔐 Put Credit Spreads")
-            ps_df = pd.DataFrame(put_spread_rows)
-            ps_df["Entry Date"] = entry_date
-            ps_df["Exit Date"] = exit_date
-            st.dataframe(ps_df)
-            st.download_button("📥 Download Put Spreads", ps_df.to_csv(index=False), "put_spreads.csv")
+            with tabs[2]:
+                st.subheader("🔐 Put Credit Spreads")
+                ps_df = pd.DataFrame(put_spread_rows)
+                ps_df["Entry Date"] = entry_date
+                ps_df["Exit Date"] = exit_date
+                st.dataframe(ps_df)
+                st.download_button("📥 Download Put Spreads", ps_df.to_csv(index=False), "put_spreads.csv")
 
 else:
     with tabs[3]:
