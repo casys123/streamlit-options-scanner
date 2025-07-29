@@ -15,7 +15,7 @@ This tool scans **optionable stocks** for:
 - 🔐 **Put Credit Spreads** with ≥65% probability of profit
 """)
 
-FINNHUB_API_KEY = "d20b0u1r01qmbi8rv080d20b0u1r01qmbi8rv08g"
+FINNHUB_API_KEY = "d24bts1r01qmb591jeo0d24bts1r01qmb591jeog"
 
 # Load default stock list from file or fallback
 @st.cache_data
