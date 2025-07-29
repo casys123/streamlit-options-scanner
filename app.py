@@ -29,7 +29,9 @@ def fetch_us_econ_calendar():
                 "Impact": impact,
                 "Color": color
             })
-        return pd.DataFrame(events)
+        return pd.D df = pd.DataFrame(events)
+        df["Label"] = df["Color"] + " " + df["Event"] + " (" + df["Impact"] + ")"
+        return df[["Date", "Time", "Label"]]ataFrame(events)
     except:
         return pd.DataFrame()
 
