@@ -131,6 +131,7 @@ def fetch_economic_calendar():
 with st.sidebar:
     st.header("Scan Settings")
     watchlist = st.text_area("Enter stock tickers (comma separated):", "AAPL,MSFT,TSLA")
+    price_range = st.selectbox("Select stock price range:", ["All", "< $10", "$10 - $50", "$50 - $150", "$150+"], index=0)
     rsi_min = st.slider("RSI Minimum", 0, 100, 0)
     rsi_max = st.slider("RSI Maximum", 0, 100, 100)
     iv_min = st.slider("Minimum Implied Volatility (%)", 0, 150, 0)
@@ -148,6 +149,12 @@ if run:
     for ticker in tickers:
         result = fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct)
         if result and result["RSI"] >= rsi_min and result["RSI"] <= rsi_max and result["IV"] >= iv_min and result["Avg Volume"] >= vol_min:
+            price = result["Price"]
+            if (price_range == "< $10" and price >= 10) or \
+               (price_range == "$10 - $50" and (price < 10 or price > 50)) or \
+               (price_range == "$50 - $150" and (price < 50 or price > 150)) or \
+               (price_range == "$150+" and price <= 150):
+                continue
             results.append(result)
             if result["Breakout"]:
                 breakouts.append(result)
