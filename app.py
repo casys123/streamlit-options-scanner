@@ -136,3 +136,32 @@ try:
     st.success("✅ Internet access is working!")
 except Exception as e:
     st.error(f"❌ No internet access: {e}")
+
+# Basic user controls for scanning
+with st.sidebar:
+    st.header("Scan Settings")
+    watchlist = st.text_area("Enter stock tickers (comma separated):", "AAPL,MSFT,TSLA", key="watchlist")
+    rsi_min = st.slider("RSI Minimum", 0, 100, 0)
+    rsi_max = st.slider("RSI Maximum", 0, 100, 100)
+    iv_min = st.slider("Minimum Implied Volatility (%)", 0, 150, 0)
+    vol_min = st.number_input("Minimum Avg Volume (1M)", value=100000, step=10000)
+    breakout_days = st.select_slider("Breakout Window (days)", options=[30, 60], value=30)
+    dte_days = st.slider("Max DTE for Covered Calls", 7, 60, 30)
+    min_premium_pct = st.slider("Min Covered Call Premium (% of stock price)", 0.5, 10.0, 0.5)
+    run = st.button("🔍 Run Scan")
+
+if run:
+    tickers = [x.strip().upper() for x in watchlist.split(",") if x.strip()]
+    st.write("Scanning tickers:", tickers)
+    results = []
+    put_spread_rows = []
+
+    for ticker in tickers:
+        st.write(f"Scanning {ticker}...")
+        result = fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct)
+        if result and result["RSI"] >= rsi_min and result["RSI"] <= rsi_max and result["IV"] >= iv_min and result["Avg Volume"] >= vol_min:
+            results.append(result)
+            put_spread_rows.extend(result.get("Put Spreads", []))
+
+    st.success(f"Scan complete. Found {len(results)} valid stocks.")
+    st.write(results)
