@@ -4,191 +4,163 @@ import yfinance as yf
 import requests
 from datetime import datetime, timedelta
 from xml.etree import ElementTree
-import traceback
 
-st.set_page_config(page_title="Stock Options Strategy Scanner", layout="wide")
-st.title("📈 Stock Options Breakout, Covered Calls & Put Credit Spreads")
+# -------- CONFIG --------
+st.set_page_config(page_title="Stock Scanner", layout="wide")
+st.title("📈 Options Strategy Scanner (Breakouts, Covered Calls, Put Credit Spreads)")
 
-@st.cache_data
-def load_default_tickers():
-    try:
-        return pd.read_csv("default_stock_list.csv")["Ticker"].tolist()[:300]
-    except:
-        return ["AAPL", "MSFT", "TSLA", "AMZN", "NVDA", "AMD", "GOOGL", "META", "NFLX", "INTC"]
-
-@st.cache_data(ttl=86400)  # Cache economic calendar for 24 hours (1 day)
-def fetch_economic_calendar():
+# -------- ECONOMIC CALENDAR (US only) --------
+@st.cache_data(ttl=302400)  # Cache for ~3.5 days (Twice per week)
+def fetch_us_econ_calendar():
     url = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
     try:
-        response = requests.get(url)
-        tree = ElementTree.fromstring(response.content)
+        res = requests.get(url)
+        tree = ElementTree.fromstring(res.content)
         events = []
-        for item in tree.findall("event"):
-            date = item.find("date").text
-            time = item.find("time").text
-            country = item.find("country").text
-            event = item.find("title").text
-            impact = item.find("impact").text
+        for e in tree.findall("event"):
+            if e.find("country").text != "USD":
+                continue
+            impact = e.find("impact").text
             color = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}.get(impact, "⚪")
-            events.append({"Date": date, "Time": time, "Country": country, "Event": event, "Impact": impact, "Color": color})
+            events.append({
+                "Date": e.find("date").text,
+                "Time": e.find("time").text,
+                "Event": e.find("title").text,
+                "Impact": impact,
+                "Color": color
+            })
         return pd.DataFrame(events)
     except:
         return pd.DataFrame()
 
-def fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct):
+# -------- LOAD TICKERS --------
+@st.cache_data
+def load_optionable_tickers():
+    try:
+        return pd.read_csv("default_stock_list.csv")["Ticker"].tolist()
+    except:
+        return ["AAPL", "MSFT", "TSLA", "SPY", "QQQ", "IWM", "DIA", "AMD", "NVDA", "GOOGL", "META", "NFLX"]
+
+# -------- RSI CALC --------
+def get_rsi(data, window=14):
+    delta = data.diff()
+    gain = delta.where(delta > 0, 0).rolling(window=window).mean()
+    loss = -delta.where(delta < 0, 0).rolling(window=window).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+# -------- SCAN FUNCTION --------
+def scan_stock(ticker, breakout_days, call_dte_limit, call_min_pct, min_pop=0.65):
     try:
         stock = yf.Ticker(ticker)
-        hist = stock.history(period="30d")
-        info = stock.info if stock.info else {}
-
+        hist = stock.history(period="60d")
         if hist.empty:
             return None
+        price = hist["Close"].iloc[-1]
+        rsi = get_rsi(hist["Close"]).iloc[-1]
+        info = stock.info
+        iv = round(info.get("impliedVolatility", 0) * 100, 2)
+        avg_vol = info.get("averageVolume", 0)
 
-        close = hist["Close"]
-        change = close.diff()
-        gain = change.where(change > 0, 0)
-        loss = -change.where(change < 0, 0)
-        avg_gain = gain.rolling(window=14).mean()
-        avg_loss = loss.rolling(window=14).mean()
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs.iloc[-1]))
-
-        price = close.iloc[-1]
-        breakout_high = max(close.tail(breakout_days))
-        breakout = price >= breakout_high * 0.98
-
-        covered_calls = []
-        put_spreads = []
+        breakout = price >= hist["Close"].tail(breakout_days).max() * 0.98
+        covered_calls, spreads = [], []
 
         if stock.options:
             for exp in stock.options:
-                try:
-                    dte = (datetime.strptime(exp, "%Y-%m-%d") - datetime.today()).days
-                    if dte > dte_days:
-                        continue
-                    opt_chain = stock.option_chain(exp)
-                    if opt_chain.calls.empty or opt_chain.puts.empty:
-                        continue
-                    for call in opt_chain.calls.itertuples():
-                        if call.strike > price and call.bid >= price * (min_premium_pct / 100):
-                            covered_calls.append({
-                                "Ticker": ticker,
-                                "Expiration": exp,
-                                "Strike": call.strike,
-                                "Premium": call.bid,
-                                "DTE": dte,
-                                "Entry Date": datetime.today().date(),
-                                "Exit Date": datetime.today().date() + timedelta(days=dte)
-                            })
-                    puts = opt_chain.puts.sort_values("strike")
-                    for i in range(len(puts) - 1):
-                        short = puts.iloc[i]
-                        long = puts.iloc[i+1]
-                        width = long.strike - short.strike
-                        credit = short.bid - long.ask
-                        if width > 0 and credit > 0 and (credit / width) >= 0.33:
-                            pop = 0.70 if short.strike < price else 0.50
-                            if pop >= 0.65:
-                                put_spreads.append({
-                                    "Ticker": ticker,
-                                    "Short Strike": short.strike,
-                                    "Long Strike": long.strike,
-                                    "Credit": round(credit, 2),
-                                    "Width": width,
-                                    "DTE": dte,
-                                    "POP": pop,
-                                    "Expiration": exp,
-                                    "Entry Date": datetime.today().date(),
-                                    "Exit Date": datetime.today().date() + timedelta(days=dte)
-                                })
-                                break
-                except:
+                dte = (datetime.strptime(exp, "%Y-%m-%d") - datetime.today()).days
+                if dte > call_dte_limit:
                     continue
+                chain = stock.option_chain(exp)
 
-        iv = round(info.get("impliedVolatility", 0) * 100, 2)
+                # Covered Calls
+                for call in chain.calls.itertuples():
+                    if 3 <= price <= 35 and call.strike > price:
+                        if call.bid >= price * (call_min_pct / 100):
+                            covered_calls.append({
+                                "Ticker": ticker, "Strike": call.strike, "Premium": call.bid,
+                                "Yield %": round((call.bid / price) * 100, 2), "DTE": dte,
+                                "Exp": exp, "Price": price, "Entry": datetime.today().date(),
+                                "Exit": datetime.today().date() + timedelta(days=dte)
+                            })
 
+                # Put Credit Spreads
+                puts = chain.puts.sort_values("strike")
+                for i in range(len(puts) - 1):
+                    short, long = puts.iloc[i], puts.iloc[i+1]
+                    width = long.strike - short.strike
+                    credit = short.bid - long.ask
+                    if credit > 0 and width > 0 and (credit / width) >= 0.33:
+                        pop = 0.75 if short.strike < price else 0.5
+                        if pop >= min_pop:
+                            spreads.append({
+                                "Ticker": ticker, "Short": short.strike, "Long": long.strike,
+                                "Credit": round(credit, 2), "Width": width, "POP": pop,
+                                "Exp": exp, "DTE": dte, "Price": price
+                            })
+                            break
         return {
-            "Ticker": ticker,
-            "Price": price,
-            "Breakout High": breakout_high,
-            "Breakout": breakout,
-            "RSI": round(rsi, 2),
-            "IV": iv,
-            "Covered Calls": covered_calls,
-            "Put Spreads": put_spreads,
-            "Sector": info.get("sector", "N/A"),
-            "Market Cap": info.get("marketCap", 0),
-            "Dividend Yield": round(info.get("dividendYield", 0) * 100, 2),
-            "Avg Volume": info.get("averageVolume", 0),
-            "Earnings Date": info.get("earningsDate", "N/A")
+            "Ticker": ticker, "Price": price, "RSI": round(rsi, 2), "IV": iv,
+            "Avg Vol": avg_vol, "Breakout": breakout,
+            "Covered Calls": covered_calls, "Put Spreads": spreads
         }
     except:
         return None
 
-with st.sidebar:
-    st.header("Scan Settings")
-    price_range = st.selectbox("Select stock price range:", ["All", "< $10", "$10 - $50", "$50 - $150", "$150+"], index=0)
-    rsi_min = st.slider("RSI Minimum", 0, 100, 0)
-    rsi_max = st.slider("RSI Maximum", 0, 100, 100)
-    iv_min = st.slider("Minimum Implied Volatility (%)", 0, 150, 0)
-    vol_min = st.number_input("Minimum Avg Volume (1M)", value=100000, step=10000)
-    breakout_days = st.select_slider("Breakout Window (days)", options=[30, 60], value=30)
-    dte_days = st.slider("Max DTE for Covered Calls", 7, 60, 30)
-    min_premium_pct = st.slider("Min Covered Call Premium (% of stock price)", 0.5, 10.0, 0.5)
-    run = st.button("🔍 Run Scan")
+# -------- UI & TABS --------
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Breakouts", "📤 Covered Calls", "📥 Put Credit Spreads", "📅 Calendar"])
 
-if run:
-    all_tickers = load_default_tickers()
-    results = []
-    breakouts, calls, spreads = [], [], []
+with tab1:
+    st.subheader("📊 Breakout Stock Scanner")
+    breakout_days = st.selectbox("Breakout window", [30, 60])
+    rsi_range = st.slider("RSI Range", 0, 100, (30, 70))
+    min_vol = st.number_input("Min Avg Volume", value=100000)
+    scan_btn = st.button("🔍 Run Breakout Scan")
+    if scan_btn:
+        tickers = load_optionable_tickers()
+        rows = []
+        for t in tickers:
+            res = scan_stock(t, breakout_days, 14, 1.5)
+            if res and res["Breakout"] and rsi_range[0] <= res["RSI"] <= rsi_range[1] and res["Avg Vol"] >= min_vol:
+                rows.append(res)
+        st.dataframe(pd.DataFrame(rows))
 
-    for ticker in all_tickers:
-        result = fetch_yfinance_data(ticker, breakout_days, dte_days, min_premium_pct)
-        if result and result["RSI"] >= rsi_min and result["RSI"] <= rsi_max and result["IV"] >= iv_min and result["Avg Volume"] >= vol_min:
-            price = result["Price"]
-            if (price_range == "< $10" and price >= 10) or \
-               (price_range == "$10 - $50" and (price < 10 or price > 50)) or \
-               (price_range == "$50 - $150" and (price < 50 or price > 150)) or \
-               (price_range == "$150+" and price <= 150):
-                continue
-            results.append(result)
-            if result["Breakout"]:
-                breakouts.append(result)
-            calls.extend(result["Covered Calls"])
-            spreads.extend(result["Put Spreads"])
+with tab2:
+    st.subheader("📤 Covered Call Finder")
+    call_dte = st.slider("Max DTE", 7, 30, 14)
+    call_prem = st.slider("Min Premium (% of stock price)", 0.5, 10.0, 1.5)
+    run_calls = st.button("🔍 Scan Covered Calls")
+    if run_calls:
+        tickers = load_optionable_tickers()
+        calls = []
+        for t in tickers:
+            r = scan_stock(t, 30, call_dte, call_prem)
+            if r and r["Covered Calls"]:
+                calls += r["Covered Calls"]
+        df = pd.DataFrame(calls)
+        st.dataframe(df)
+        st.download_button("Download Calls", df.to_csv(index=False), "covered_calls.csv")
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Breakout Stocks", "📤 Covered Calls", "📥 Put Credit Spreads", "📅 Econ Calendar"])
+with tab3:
+    st.subheader("📥 Put Credit Spread Screener")
+    min_pop = st.slider("Min POP (%)", 50, 90, 65)
+    run_spreads = st.button("🔍 Scan Put Spreads")
+    if run_spreads:
+        tickers = load_optionable_tickers()
+        spreads = []
+        for t in tickers:
+            r = scan_stock(t, 30, 14, 1.5, min_pop / 100)
+            if r and r["Put Spreads"]:
+                spreads += r["Put Spreads"]
+        df = pd.DataFrame(spreads)
+        st.dataframe(df)
+        st.download_button("Download Spreads", df.to_csv(index=False), "put_spreads.csv")
 
-    with tab1:
-        st.subheader("📊 Breakout Stocks")
-        if breakouts:
-            st.dataframe(pd.DataFrame(breakouts))
-            st.download_button("Download Breakouts", pd.DataFrame(breakouts).to_csv(index=False), "breakouts.csv")
-        else:
-            st.info("No breakout candidates found.")
-
-    with tab2:
-        st.subheader("📤 Covered Call Opportunities")
-        if calls:
-            st.dataframe(pd.DataFrame(calls))
-            st.download_button("Download Covered Calls", pd.DataFrame(calls).to_csv(index=False), "covered_calls.csv")
-        else:
-            st.info("No covered calls found with current filters.")
-
-    with tab3:
-        st.subheader("📥 Put Credit Spreads")
-        if spreads:
-            st.dataframe(pd.DataFrame(spreads))
-            st.download_button("Download Put Spreads", pd.DataFrame(spreads).to_csv(index=False), "put_spreads.csv")
-        else:
-            st.info("No put credit spreads found with current filters.")
-
-    with tab4:
-        st.subheader("📅 Weekly Economic Calendar")
-        econ = fetch_economic_calendar()
-        if not econ.empty:
-            econ["Display"] = econ["Color"] + " " + econ["Event"] + " (" + econ["Impact"] + ")"
-            st.dataframe(econ[["Date", "Time", "Country", "Display"]])
-            st.download_button("Download Calendar", econ.to_csv(index=False), "calendar.csv")
-        else:
-            st.error("Could not load economic calendar.")
+with tab4:
+    st.subheader("📅 Weekly US Economic Calendar")
+    econ = fetch_us_econ_calendar()
+    if not econ.empty:
+        econ["Label"] = econ["Color"] + \" \" + econ[\"Event\"] + \" (\" + econ[\"Impact\"] + \")\"
+        st.dataframe(econ[["Date", "Time", "Label"]])
+        st.download_button(\"Download Calendar\", econ.to_csv(index=False), \"econ_calendar.csv\")
+    else:
+        st.error(\"Could not fetch calendar.\")
